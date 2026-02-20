@@ -1,0 +1,88 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: medusa_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: medusa_plants
+      POSTGRES_USER: medusa
+      POSTGRES_PASSWORD: medusa
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medusa -d medusa_plants"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: medusa_redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    image: node:20-bookworm-slim
+    container_name: medusa_backend
+    restart: unless-stopped
+    working_dir: /app
+    env_file:
+      - ./backend/.env
+    environment:
+      MEDUSA_ADMIN_EMAIL: admin@plantas.local
+      MEDUSA_ADMIN_PASSWORD: supersecret
+      MEDUSA_BOOTSTRAP_MARKER: /data/bootstrap.done
+      NODE_ENV: development
+      CI: "true"
+      DO_NOT_TRACK: "1"
+    command: >
+      bash -lc "corepack enable &&
+      yarn install --immutable &&
+      bash /app/docker-entrypoint.sh"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./backend:/app
+      - medusa_state:/data
+      - bootstrap_data:/bootstrap
+
+  storefront:
+    image: node:20-bookworm-slim
+    container_name: medusa_storefront
+    restart: unless-stopped
+    working_dir: /app
+    env_file:
+      - ./storefront/.env.local
+    environment:
+      PUBLISHABLE_KEY_FILE: /bootstrap/publishable_key
+      NODE_ENV: development
+      CI: "true"
+    command: >
+      bash -lc "corepack enable &&
+      yarn install --immutable &&
+      bash /app/docker-entrypoint.sh"
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "8100:8000"
+    volumes:
+      - ./storefront:/app
+      - bootstrap_data:/bootstrap:ro
+
+volumes:
+  postgres_data:
+  redis_data:
+  medusa_state:
+  bootstrap_data:
